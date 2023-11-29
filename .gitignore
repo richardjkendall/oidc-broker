@@ -1,0 +1,6 @@
+__pycache__
+.env
+test.json
+tf
+.DS_Store
+*.json
