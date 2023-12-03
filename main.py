@@ -8,7 +8,7 @@ import awsgi
 from flask_cors import CORS
 from flask import Flask, jsonify, make_response, request, redirect
 from error_handler import error_handler, BadRequestException, ResourceNotFoundException, AccessDeniedException
-from utils import get_aurl, get_rand_string, post_to_url, get_wkc
+from utils import get_aurl, get_rand_string, post_to_url, get_wkc, validate_jwt, get_certs, gen_signed_cookie
 
 # fix for compatability with AWS lambda logging
 if len(logging.getLogger().handlers) > 0:
@@ -22,7 +22,12 @@ app = Flask(__name__)
 CORS(app)
 
 dynamodb = boto3.resource("dynamodb")
+ssm = boto3.client("ssm")
 table = dynamodb.Table("login_dev")
+
+def get_ssm_secret(param_name):
+  parameter = ssm.get_parameter(Name=param_name, WithDecryption=True)
+  return parameter['Parameter']['Value']
 
 def get_site(sitename):
   response = table.get_item(
@@ -59,9 +64,10 @@ def process():
     raise BadRequestException("No site specified in state")
   sitename = state["site"]
   source_url = state["source_url"]
+  request_id = state["request_id"]
   site = get_site(sitename)
   # need to validate the hash in the state
-  hash_source = site["state_secret"] + sitename + source_url
+  hash_source = site["state_secret"] + sitename + source_url + request_id
   hash_hash = sha256(hash_source.encode("utf-8")).hexdigest()
   if hash_hash != state["hash"]:
     raise AccessDeniedException("Hash mismatch")
@@ -86,7 +92,36 @@ def process():
     redirect_uri=redirect_uri
   )
   resp = json.loads(resp)
-  return success_json_response(resp)
+  # need to validate the JWT signature
+  keys = get_certs(
+    url=wkc_data["jwks_uri"]
+  )
+  validate_jwt(
+    token=resp["access_token"],
+    key_set=keys,
+    aud=sitename
+  )
+  # we need to get the private key from ssm
+  signing_key = get_ssm_secret(site["signing_key"])
+  # then need to generate the signed cookie and send back to CF process step
+  cookies = gen_signed_cookie(
+    key_id = site["key_id"],
+    private_key = signing_key,
+    resource = site["resource"],
+    duration = site["cookie_duration"]
+  )
+  # hash the secret and ID
+  token = sha256(site["state_secret"].encode("utf-8"))
+  token.update(request_id.encode("utf-8"))
+  to_send_to_site = {
+    "cookies": cookies,
+    "source_url": state["source_url"],
+    "token": base64.b64encode(token.digest()).decode(),
+    "request_id": request_id
+  }
+  to_send_to_site_b64 = base64.b64encode(json.dumps(to_send_to_site).encode("utf-8")).decode("utf-8")
+  target_url = site["redirect_to"] + "?state=" + to_send_to_site_b64
+  return redirect(target_url, 302)
 
 @app.route("/login", methods=["GET"])
 @error_handler
@@ -99,12 +134,16 @@ def start():
   if sitename != None:
     site = get_site(sitename)
     source_url = "/"
+    requestid = request.args.get("id")
     if request.args.get("src") != None:
       source_url = request.args.get("src")
-    hash_source = site["state_secret"] + sitename + source_url
+    if requestid == None:
+      raise BadRequestException("No request ID")
+    hash_source = site["state_secret"] + sitename + source_url + requestid
     state_source = {
       "source_url": source_url,
       "site": sitename,
+      "request_id": requestid,
       "hash": sha256(hash_source.encode("utf-8")).hexdigest(),
       "nonce": get_rand_string(10)
     }

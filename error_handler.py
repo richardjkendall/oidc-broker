@@ -21,11 +21,6 @@ class AccessDeniedException(Exception):
     def __init__(self, *args, **kwargs):
         Exception.__init__(self, *args, **kwargs)
 
-class ExpiredSignatureError(Exception):
-    """Class for BadRequestException"""
-    def __init__(self, *args, **kwargs):
-        Exception.__init__(self, *args, **kwargs)
-
 def exception_to_json_response(exception, code):
     """
     Turns an exception into a JSON payload to respond to a service call

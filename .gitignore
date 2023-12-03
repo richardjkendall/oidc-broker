@@ -4,3 +4,4 @@ test.json
 tf
 .DS_Store
 *.json
+*.pem
