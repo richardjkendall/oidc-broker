@@ -2,6 +2,7 @@ import logging
 import json
 import boto3
 import base64
+import os
 from hashlib import sha256
 
 import awsgi
@@ -23,7 +24,7 @@ CORS(app)
 
 dynamodb = boto3.resource("dynamodb")
 ssm = boto3.client("ssm")
-table = dynamodb.Table("login_dev")
+table = dynamodb.Table(os.environ.get("SITES_TABLE"))
 
 def get_ssm_secret(param_name):
   parameter = ssm.get_parameter(Name=param_name, WithDecryption=True)
