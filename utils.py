@@ -3,15 +3,16 @@ import logging
 import jwt
 from datetime import datetime, timedelta
 
-#from cloudfront_signed_cookies.signer import Signer
 from cloudfront import CloudFrontUtil
 
 from jwt.algorithms import RSAAlgorithm
 from jwt.exceptions import ExpiredSignatureError
 from error_handler import SystemFailureException, AccessDeniedException
+from cache import ttl_cache
 
 logger = logging.getLogger()
 
+@ttl_cache(ttl = 3600)
 def get_wkc(host, realm):
   WKC_URL = "https://{host}/auth/realms/{realm}/.well-known/openid-configuration"
   url = WKC_URL.format(
@@ -24,6 +25,7 @@ def get_wkc(host, realm):
   logger.info("get_wkc: got config", data)
   return data
 
+@ttl_cache(ttl = 3600)
 def get_certs(url):
   resp = urllib.request.urlopen(url).read().decode()
   data = json.loads(resp)["keys"]
